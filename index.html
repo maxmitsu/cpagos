@@ -365,7 +365,6 @@ const GDRIVE_SCOPES='https://www.googleapis.com/auth/drive.file';
 const GDRIVE_FILE_NAME='casa-pagos-backup.json';
 
 function gdriveConnect(){
-  // Usamos OAuth popup con token implícito
   const redirectUri=window.location.href.split('?')[0].split('#')[0];
   const params=new URLSearchParams({
     client_id: GDRIVE_CLIENT_ID,
@@ -374,28 +373,52 @@ function gdriveConnect(){
     scope: GDRIVE_SCOPES,
     prompt: 'select_account'
   });
-  // Guardar estado para restaurar después del redirect
-  localStorage.setItem('cp_gdrive_pending','1');
-  window.location.href='https://accounts.google.com/o/oauth2/v2/auth?'+params.toString();
+  const authUrl='https://accounts.google.com/o/oauth2/v2/auth?'+params.toString();
+
+  // Intentar popup primero
+  const w=400, h=600;
+  const left=Math.max(0,(screen.width-w)/2);
+  const top=Math.max(0,(screen.height-h)/2);
+  const popup=window.open(authUrl,'gdrive_auth',`width=${w},height=${h},left=${left},top=${top},scrollbars=yes`);
+
+  if(!popup || popup.closed){
+    // Fallback: redirect directo (móvil)
+    localStorage.setItem('cp_gdrive_pending','1');
+    window.location.href=authUrl;
+    return;
+  }
+
+  // Escuchar cuando el popup vuelve con el token
+  const timer=setInterval(()=>{
+    try{
+      if(popup.closed){ clearInterval(timer); return; }
+      const hash=popup.location.hash;
+      if(!hash) return;
+      const p=new URLSearchParams(hash.replace('#',''));
+      const token=p.get('access_token');
+      if(!token) return;
+      clearInterval(timer);
+      popup.close();
+      gdriveToken=token;
+      localStorage.setItem('cp_gdrive_token',token);
+      showToast('✓ Conectado a Google Drive, sincronizando…');
+      gdriveFindOrCreateFile().then(()=>{ updateCloudUI(); gdriveLoadData(); });
+    }catch(e){ /* cross-origin, seguir esperando */ }
+  }, 500);
 }
 
 function gdriveHandleRedirect(){
-  // Chequear si venimos de OAuth redirect
+  // Fallback para móvil: venimos de redirect
   const hash=window.location.hash;
   if(!hash) return;
   const params=new URLSearchParams(hash.replace('#',''));
   const token=params.get('access_token');
   if(!token) return;
-  // Limpiar hash
   history.replaceState(null,null,' ');
   gdriveToken=token;
   localStorage.setItem('cp_gdrive_token',token);
-  // Buscar o crear archivo en Drive
   showToast('✓ Conectado a Google Drive, sincronizando…');
-  gdriveFindOrCreateFile().then(()=>{
-    updateCloudUI();
-    gdriveLoadData(); // cargar datos desde Drive
-  });
+  gdriveFindOrCreateFile().then(()=>{ updateCloudUI(); gdriveLoadData(); });
 }
 
 async function gdriveFindOrCreateFile(){
