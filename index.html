@@ -191,9 +191,10 @@
   <!-- BACKUP BAR -->
   <div class="backup-bar">
     <button class="btn-backup primary" id="btnLinkBar" onclick="gdriveConnect()">☁️ Conectar Google Drive</button>
+    <button class="btn-backup" onclick="downloadSnapshotHTML()">⬇ Descargar app completa (.html)</button>
     <button class="btn-backup" onclick="exportJSON()">⬇ Exportar respaldo .json</button>
-    <button class="btn-backup" onclick="document.getElementById('importInput').click()">⬆ Importar respaldo</button>
-    <input type="file" id="importInput" accept=".json" style="display:none" onchange="importJSON(this)">
+    <button class="btn-backup" onclick="document.getElementById('importInput').click()">⬆ Cargar respaldo / app</button>
+    <input type="file" id="importInput" accept=".json,.html,text/html" style="display:none" onchange="importBackupFile(this)">
   </div>
 
   <!-- PAYMENTS -->
@@ -318,6 +319,7 @@ const mem={token:null,tokenClient:null,saveTimer:null,pollTimer:null,fileId:null
 
 // ── INIT ──
 (function(){
+  loadEmbeddedSnapshot();
   try{ property=JSON.parse(localStorage.getItem('cp_prop')||'{}'); payments=JSON.parse(localStorage.getItem('cp_pays')||'[]'); }catch(e){}
   document.getElementById('payDate').value=today();
   renderAll();
@@ -338,12 +340,8 @@ function scheduleSave(){ clearTimeout(saveTimer); setSyncDot('saving'); saveTime
 async function saveToFile(){
   if(!fileHandle) return;
   try{
-    // Embed data into the HTML so the saved file is self-contained
-    let src=document.documentElement.outerHTML;
-    const tag=`<script id="_d_">localStorage.setItem('cp_prop',${JSON.stringify(JSON.stringify(property))});localStorage.setItem('cp_pays',${JSON.stringify(JSON.stringify(payments))});<\/script>`;
-    src=src.replace(/<script id="_d_">[\s\S]*?<\/script>/,'').replace('</body>',tag+'\n</body>');
     const w=await fileHandle.createWritable();
-    await w.write(src); await w.close();
+    await w.write(buildSnapshotHTML()); await w.close();
     setSyncDot('linked'); showToast('✓ Guardado en '+fileHandle.name);
   }catch(e){ setSyncDot('linked'); }
 }
@@ -481,6 +479,10 @@ function startDrivePoll(){
   },45000);
 }
 function stopDrivePoll(){if(mem.pollTimer)clearInterval(mem.pollTimer);mem.pollTimer=null;}
+window.addEventListener('online',()=>{ if(mem.storageMode==='drive'&&mem.fileId) driveSave(); });
+document.addEventListener('visibilitychange',()=>{
+  if(document.visibilityState==='visible'&&mem.storageMode==='drive'&&mem.fileId) driveSave();
+});
 
 // GIS init — igual que AutoLog
 function initGIS(){
@@ -568,7 +570,7 @@ function updateCloudUI(){
     icon.textContent='✅';
     const email=mem.userInfo?.email||'';
     title.textContent='Google Drive conectado'+(email?' · '+email:'');
-    sub.textContent='Auto-guardado activo · '+GDRIVE_FILE_NAME+(mem.lastSync?' · Último sync: '+mem.lastSync.toLocaleTimeString('es-PR'):'');
+    sub.textContent='Auto-guardado activo en Drive · '+GDRIVE_FILE_NAME+(mem.lastSync?' · Último sync: '+mem.lastSync.toLocaleTimeString('es-PR'):'');
     btn.textContent='Reconectar'; unlink.style.display='';
     btnBar.textContent='☁️ Drive conectado';
     setSyncDot('linked');
@@ -597,23 +599,59 @@ function setSyncDot(s){
 }
 
 // ── EXPORT / IMPORT ──
+function buildSnapshotHTML(){
+  let src=document.documentElement.outerHTML;
+  const tag=`<script id="_d_">localStorage.setItem('cp_prop',${JSON.stringify(JSON.stringify(property))});localStorage.setItem('cp_pays',${JSON.stringify(JSON.stringify(payments))});<\/script>`;
+  src=src.replace(/<script id="_d_">[\s\S]*?<\/script>/,'').replace('</body>',tag+'\n</body>');
+  return '<!DOCTYPE html>\n'+src;
+}
+function loadEmbeddedSnapshot(){
+  const tag=document.getElementById('_d_');
+  if(!tag) return;
+  try{ eval(tag.textContent); }catch(e){ console.warn('No se pudo cargar snapshot embebido', e); }
+}
+function downloadSnapshotHTML(){
+  const blob=new Blob([buildSnapshotHTML()],{type:'text/html;charset=utf-8'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download='casa-pagos-'+today()+'.html';
+  a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href),1500);
+  showToast('✓ App completa descargada con tus datos');
+}
 function exportJSON(){
   const blob=new Blob([JSON.stringify({property,payments,exportedAt:new Date().toISOString(),v:1},null,2)],{type:'application/json'});
   const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='casa-pagos-'+today()+'.json'; a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href),1500);
   showToast('✓ Respaldo exportado');
 }
-function importJSON(input){
+function importBackupFile(input){
   if(!input.files[0]) return;
+  const file=input.files[0];
   const r=new FileReader();
   r.onload=e=>{
     try{
-      const d=JSON.parse(e.target.result);
-      if(!confirm('¿Importar respaldo? Esto reemplazará los datos actuales.')) return;
+      const raw=e.target.result;
+      let d=null;
+      if(file.name.toLowerCase().endsWith('.json')){
+        d=JSON.parse(raw);
+      }else if(file.name.toLowerCase().endsWith('.html')){
+        const propMatch=raw.match(/localStorage\.setItem\('cp_prop',\s*([\s\S]*?)\);/);
+        const paysMatch=raw.match(/localStorage\.setItem\('cp_pays',\s*([\s\S]*?)\);/);
+        if(!propMatch||!paysMatch) throw new Error('Ese HTML no contiene un respaldo de CasaPagos');
+        d={
+          property: JSON.parse(JSON.parse(propMatch[1])),
+          payments: JSON.parse(JSON.parse(paysMatch[1]))
+        };
+      }else{
+        throw new Error('Formato no compatible');
+      }
+      if(!confirm('¿Cargar este respaldo? Esto reemplazará los datos actuales.')) return;
       property=d.property||{}; payments=d.payments||[];
-      persist(); renderAll(); showToast('✓ Respaldo importado');
-    }catch(err){ alert('Error: '+err.message); }
+      persist(); renderAll(); showToast('✓ Respaldo cargado correctamente');
+    }catch(err){ alert('Error al cargar respaldo: '+err.message); }
   };
-  r.readAsText(input.files[0]); input.value='';
+  r.readAsText(file); input.value='';
 }
 
 // ── PROPERTY ──
