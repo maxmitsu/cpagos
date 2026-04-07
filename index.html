@@ -314,6 +314,7 @@
 <script>
 // ── STATE ──
 let property={}, payments=[], editingId=null, filter='all', pendingEvidence=null, pendingEvidenceName=null, receiptId=null, fileHandle=null, saveTimer=null;
+const mem={token:null,tokenClient:null,saveTimer:null,pollTimer:null,fileId:null,remoteModifiedTime:null,needsReconnect:false,userInfo:null,storageMode:'local',syncState:'idle',lastSync:null};
 
 // ── INIT ──
 (function(){
@@ -359,10 +360,9 @@ function unlinkFile(){ fileHandle=null; setSyncDot('idle'); updateCloudUI(); sho
 
 // ── GOOGLE DRIVE (GIS — igual que AutoLog) ──
 const GDRIVE_CLIENT_ID='304798731170-8cr49nibe88fa6qq67aqp1dqahe45gbq.apps.googleusercontent.com';
-const GDRIVE_SCOPES='https://www.googleapis.com/auth/drive.appdata';
+const GDRIVE_SCOPES='https://www.googleapis.com/auth/drive.file';
 const GDRIVE_FILE_NAME='casa-pagos-backup.json';
-
-const mem={token:null,tokenClient:null,saveTimer:null,pollTimer:null,fileId:null,remoteModifiedTime:null,needsReconnect:false,userInfo:null,storageMode:'local',syncState:'idle',lastSync:null};
+const GDRIVE_FOLDER='appDataFolder';
 
 // Drive HTTP helpers
 async function driveReq(url,opts={}){
@@ -373,12 +373,12 @@ async function driveReq(url,opts={}){
 }
 async function driveFindFile(){
   const q=encodeURIComponent(`name='${GDRIVE_FILE_NAME}'`);
-  const res=await driveReq(`https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&q=${q}&fields=files(id,name,modifiedTime)`);
+  const res=await driveReq(`https://www.googleapis.com/drive/v3/files?spaces=drive&q=${q}&fields=files(id,name,modifiedTime)`);
   return (await res.json()).files?.[0]||null;
 }
 async function driveReadFile(id){return(await driveReq(`https://www.googleapis.com/drive/v3/files/${id}?alt=media`)).json();}
 async function driveCreateFile(content){
-  const meta=new Blob([JSON.stringify({name:GDRIVE_FILE_NAME,parents:['appDataFolder']})],{type:'application/json'});
+  const meta=new Blob([JSON.stringify({name:GDRIVE_FILE_NAME})],{type:'application/json'});
   const body=new Blob([JSON.stringify(content)],{type:'application/json'});
   const form=new FormData();form.append('metadata',meta);form.append('file',body);
   return(await driveReq('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,modifiedTime',{method:'POST',body:form})).json();
