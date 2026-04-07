@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>CasaPagos</title>
 <link rel="manifest" href="manifest.json">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 64 64%22%3E%3Ctext y=%2250%22 font-size=%2250%22%3E🏠%3C/text%3E%3C/svg%3E">
 <meta name="theme-color" content="#1a1612">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -434,16 +435,22 @@ function updateLocalModeUI(){
 
 // ── PERSIST ──
 function persist(){
-  localStorage.setItem('cp_prop',JSON.stringify(property));
-  localStorage.setItem('cp_pays',JSON.stringify(payments));
-    if(mem.storageMode==='drive'&&mem.fileId){
+  if(mem.localBackup){
+    localStorage.setItem('cp_prop',JSON.stringify(property));
+    localStorage.setItem('cp_pays',JSON.stringify(payments));
+  }else{
+    localStorage.removeItem('cp_prop');
+    localStorage.removeItem('cp_pays');
+  }
+  localStorage.setItem('cp_local_backup', mem.localBackup ? '1' : '0');
+
+  if(mem.storageMode==='drive'&&mem.fileId){
     mem.syncState='saving';
     updateStatusPanel();
     scheduleDriveSave();
   }else{
     updateStatusPanel();
   }
-}
 }
 
 
