@@ -162,8 +162,8 @@
   <div class="cloud-banner" id="cloudBanner">
     <div class="cloud-icon" id="cloudIcon">☁️</div>
     <div class="cloud-text">
-      <div class="cloud-title" id="cloudTitle">Conectar Google Drive — respaldo automático</div>
-      <div class="cloud-sub" id="cloudSub">Cada pago se guarda en la nube. Accede desde cualquier dispositivo.</div>
+      <div class="cloud-title" id="cloudTitle">Inicia sesión con Google para guardar en la nube</div>
+      <div class="cloud-sub" id="cloudSub">Tu cuenta de Google será el almacenamiento principal. Local es opcional.</div>
     </div>
     <div style="display:flex;gap:6px;flex-shrink:0;">
       <button class="btn-link" id="cloudBtn" onclick="gdriveConnect()">🔗 Conectar Drive</button>
@@ -190,7 +190,8 @@
 
   <!-- BACKUP BAR -->
   <div class="backup-bar">
-    <button class="btn-backup primary" id="btnLinkBar" onclick="gdriveConnect()">☁️ Conectar Google Drive</button>
+    <button class="btn-backup primary" id="btnLinkBar" onclick="gdriveConnect()">🔐 Iniciar sesión con Google</button>
+    <button class="btn-backup" id="btnLocalMode" onclick="toggleLocalMode()">💾 Respaldo local: OFF</button>
     <button class="btn-backup" onclick="downloadSnapshotHTML()">⬇ Descargar app completa (.html)</button>
     <button class="btn-backup" onclick="exportJSON()">⬇ Exportar respaldo .json</button>
     <button class="btn-backup" onclick="document.getElementById('importInput').click()">⬆ Cargar respaldo / app</button>
@@ -314,49 +315,59 @@
 
 <script>
 // ── STATE ──
-let property={}, payments=[], editingId=null, filter='all', pendingEvidence=null, pendingEvidenceName=null, receiptId=null, fileHandle=null, saveTimer=null;
-const mem={token:null,tokenClient:null,saveTimer:null,pollTimer:null,fileId:null,remoteModifiedTime:null,needsReconnect:false,userInfo:null,storageMode:'local',syncState:'idle',lastSync:null};
+let property={}, payments=[], editingId=null, filter='all', pendingEvidence=null, pendingEvidenceName=null, receiptId=null,  saveTimer=null;
+const mem={token:null,tokenClient:null,saveTimer:null,pollTimer:null,fileId:null,remoteModifiedTime:null,needsReconnect:false,userInfo:null,storageMode:'local',syncState:'idle',lastSync:null,localBackup:false};
 
 // ── INIT ──
 (function(){
   loadEmbeddedSnapshot();
-  try{ property=JSON.parse(localStorage.getItem('cp_prop')||'{}'); payments=JSON.parse(localStorage.getItem('cp_pays')||'[]'); }catch(e){}
+  mem.localBackup = localStorage.getItem('cp_local_backup') === '1';
+  try{
+    if(mem.localBackup){
+      property=JSON.parse(localStorage.getItem('cp_prop')||'{}');
+      payments=JSON.parse(localStorage.getItem('cp_pays')||'[]');
+    }
+  }catch(e){}
   document.getElementById('payDate').value=today();
   renderAll();
   updateCloudUI();
+  updateLocalModeUI();
   if(!property.name) setTimeout(openPropModal,500);
 })();
 
 function renderAll(){ renderProperty(); renderPayments(); updateSummary(); }
+function toggleLocalMode(){
+  mem.localBackup=!mem.localBackup;
+  if(mem.localBackup){
+    localStorage.setItem('cp_prop',JSON.stringify(property));
+    localStorage.setItem('cp_pays',JSON.stringify(payments));
+    showToast('✓ Respaldo local activado');
+  }else{
+    localStorage.removeItem('cp_prop');
+    localStorage.removeItem('cp_pays');
+    showToast('Respaldo local desactivado');
+  }
+  localStorage.setItem('cp_local_backup', mem.localBackup ? '1' : '0');
+  updateLocalModeUI();
+}
+function updateLocalModeUI(){
+  const btn=document.getElementById('btnLocalMode');
+  if(!btn) return;
+  btn.textContent='💾 Respaldo local: '+(mem.localBackup?'ON':'OFF');
+  btn.style.borderColor=mem.localBackup?'var(--green)':'var(--border)';
+  btn.style.color=mem.localBackup?'var(--green)':'var(--ink2)';
+}
 
 // ── PERSIST ──
 function persist(){
   localStorage.setItem('cp_prop',JSON.stringify(property));
   localStorage.setItem('cp_pays',JSON.stringify(payments));
-  if(fileHandle) scheduleSave();
-  if(mem.storageMode==='drive'&&mem.fileId) scheduleDriveSave();
+    if(mem.storageMode==='drive'&&mem.fileId) scheduleDriveSave();
 }
-function scheduleSave(){ clearTimeout(saveTimer); setSyncDot('saving'); saveTimer=setTimeout(saveToFile,900); }
-async function saveToFile(){
-  if(!fileHandle) return;
-  try{
-    const w=await fileHandle.createWritable();
-    await w.write(buildSnapshotHTML()); await w.close();
-    setSyncDot('linked'); showToast('✓ Guardado en '+fileHandle.name);
-  }catch(e){ setSyncDot('linked'); }
 }
 
-// ── FILE SYSTEM API (legacy OneDrive) ──
-async function linkFile(){
-  if(!('showSaveFilePicker' in window)){ showToast('⚠ Usa Chrome o Edge para esta función'); return; }
-  try{
-    fileHandle=await window.showSaveFilePicker({suggestedName:'casa-pagos.html',types:[{description:'HTML',accept:{'text/html':['.html']}}]});
-    await saveToFile();
-  }catch(e){ if(e.name!=='AbortError') showToast('Error: '+e.message); }
-}
-function unlinkFile(){ fileHandle=null; setSyncDot('idle'); updateCloudUI(); showToast('Archivo desvinculado'); }
 
-// ── GOOGLE DRIVE (GIS — igual que AutoLog) ──
+// ── GOOGLE LOGIN + DRIVE SYNC ──
 const GDRIVE_CLIENT_ID='304798731170-8cr49nibe88fa6qq67aqp1dqahe45gbq.apps.googleusercontent.com';
 const GDRIVE_SCOPES='https://www.googleapis.com/auth/drive.file';
 const GDRIVE_FILE_NAME='casa-pagos-backup.json';
@@ -423,11 +434,10 @@ async function driveLoad(){
     const file=await driveFindFile();
     if(file){
       const content=await driveReadFile(file.id);
-      if(content.payments&&content.payments.length>0){
-        if(confirm(`Drive tiene ${content.payments.length} pagos guardados. ¿Cargarlos?`)){
-          property=content.property||{}; payments=content.payments||[];
-          persist(); renderAll();
-        }
+      if(content?.payments&&content.payments.length>0){
+        property=content.property||{};
+        payments=content.payments||[];
+        persist(); renderAll();
       }
       mem.fileId=file.id; mem.remoteModifiedTime=file.modifiedTime||null;
     } else {
@@ -436,7 +446,7 @@ async function driveLoad(){
     }
     mem.storageMode='drive'; mem.syncState='saved'; mem.lastSync=new Date();
     setSyncDot('linked'); updateCloudUI(); startDrivePoll();
-    showToast('✓ Conectado a Google Drive');
+    showToast('✓ Sesión iniciada con Google y sincronización activa');
   }catch(e){
     if(e?.status===401) return handleDriveAuthError();
     mem.syncState='error'; setSyncDot('idle');
@@ -552,7 +562,7 @@ function gdriveDisconnect(){
   if(mem.token) window.google?.accounts?.oauth2?.revoke(mem.token);
   mem.token=null; mem.fileId=null; mem.storageMode='local'; mem.syncState='idle';
   mem.needsReconnect=false; mem.userInfo=null; mem.remoteModifiedTime=null;
-  setSyncDot('idle'); updateCloudUI(); showToast('Google Drive desconectado');
+  setSyncDot('idle'); updateCloudUI(); showToast('Sesión de Google cerrada');
 }
 
 // Iniciar GIS al cargar
@@ -569,26 +579,26 @@ function updateCloudUI(){
     banner.classList.add('linked');
     icon.textContent='✅';
     const email=mem.userInfo?.email||'';
-    title.textContent='Google Drive conectado'+(email?' · '+email:'');
+    title.textContent='Sesión iniciada con Google'+(email?' · '+email:'');
     sub.textContent='Auto-guardado activo en Drive · '+GDRIVE_FILE_NAME+(mem.lastSync?' · Último sync: '+mem.lastSync.toLocaleTimeString('es-PR'):'');
-    btn.textContent='Reconectar'; unlink.style.display='';
-    btnBar.textContent='☁️ Drive conectado';
+    btn.textContent='Reautenticar'; unlink.style.display='';
+    btnBar.textContent='✅ Google conectado';
     setSyncDot('linked');
   } else if(mem.needsReconnect){
     banner.classList.remove('linked');
     icon.textContent='⚠️';
-    title.textContent='Drive desconectado — reconecta para continuar';
+    title.textContent='Sesión de Google vencida — vuelve a iniciar';
     sub.textContent='Tu sesión expiró. Los datos locales están seguros.';
     btn.textContent='🔗 Reconectar Drive'; unlink.style.display='none';
-    btnBar.textContent='⚠️ Reconectar Drive';
+    btnBar.textContent='⚠️ Iniciar sesión otra vez';
     setSyncDot('idle');
   } else {
     banner.classList.remove('linked');
     icon.textContent='☁️';
-    title.textContent='Conectar Google Drive — respaldo automático';
-    sub.textContent='Cada pago se guarda en la nube. Accede desde cualquier dispositivo.';
-    btn.textContent='🔗 Conectar Drive'; unlink.style.display='none';
-    btnBar.textContent='☁️ Conectar Google Drive';
+    title.textContent='Inicia sesión con Google para guardar en la nube';
+    sub.textContent='Google es el guardado principal. El respaldo local es opcional.';
+    btn.textContent='🔐 Iniciar sesión con Google'; unlink.style.display='none';
+    btnBar.textContent='🔐 Iniciar sesión con Google';
     setSyncDot('idle');
   }
 }
