@@ -353,7 +353,7 @@
 <script>
 // ── STATE ──
 let property={}, payments=[], editingId=null, filter='all', pendingEvidence=null, pendingEvidenceName=null, receiptId=null,  saveTimer=null;
-const mem={token:null,tokenClient:null,saveTimer:null,pollTimer:null,fileId:null,remoteModifiedTime:null,needsReconnect:false,userInfo:null,storageMode:'local',syncState:'idle',lastSync:null,localBackup:false};
+const mem={token:null,tokenClient:null,saveTimer:null,pollTimer:null,fileId:null,remoteModifiedTime:null,needsReconnect:false,userInfo:null,storageMode:'local',syncState:'idle',lastSync:null,localBackup:false,initialDriveCheckDone:false};
 
 // ── INIT ──
 (function(){
@@ -371,10 +371,25 @@ const mem={token:null,tokenClient:null,saveTimer:null,pollTimer:null,fileId:null
   updateLocalModeUI();
   updateStatusPanel();
   updateLoginOverlay();
-  if(!property.name) setTimeout(openPropModal,500);
+  maybePromptPropertySetup();
 })();
 
 function renderAll(){ renderProperty(); renderPayments(); updateSummary(); updateStatusPanel(); }
+function maybePromptPropertySetup(){
+  if(document.getElementById('propModal')?.classList.contains('open')) return;
+  if(document.getElementById('loginOverlay')?.classList.contains('show')) return;
+  if(!mem.initialDriveCheckDone && !mem.localBackup) return;
+  if(payments.length>0) return;
+  if(property && property.name) return;
+  setTimeout(()=>{
+    if((!property || !property.name) &&
+       payments.length===0 &&
+       !document.getElementById('propModal')?.classList.contains('open') &&
+       !document.getElementById('loginOverlay')?.classList.contains('show')){
+      openPropModal();
+    }
+  },500);
+}
 function requireLogin(){
   if(mem.storageMode!=='drive' || !mem.token){
     updateLoginOverlay();
@@ -510,8 +525,9 @@ async function driveGetMeta(id){
 }
 
 function handleDriveAuthError(){
-  mem.token=null; mem.storageMode='local'; mem.syncState='error'; mem.needsReconnect=true;
+  mem.token=null; mem.storageMode='local'; mem.syncState='error'; mem.needsReconnect=true; mem.initialDriveCheckDone=true;
   stopDrivePoll(); setSyncDot('idle'); updateCloudUI(); updateLoginOverlay(); updateStatusPanel();
+  maybePromptPropertySetup();
   showToast('⚠ Drive desconectado. Vuelve a conectar.');
 }
 
@@ -531,8 +547,10 @@ async function driveLoad(){
       const created=await driveCreateFile({property,payments,savedAt:new Date().toISOString()});
       mem.fileId=created.id; mem.remoteModifiedTime=created.modifiedTime||null;
     }
+    mem.initialDriveCheckDone=true;
     mem.storageMode='drive'; mem.syncState='saved'; mem.lastSync=new Date();
     setSyncDot('linked'); updateCloudUI(); startDrivePoll(); updateLoginOverlay(); updateStatusPanel();
+    maybePromptPropertySetup();
     showToast('✓ Sesión iniciada con Google y sincronización activa');
   }catch(e){
     if(e?.status===401) return handleDriveAuthError();
@@ -656,8 +674,8 @@ function gdriveDisconnect(){
   stopDrivePoll();
   if(mem.token) window.google?.accounts?.oauth2?.revoke(mem.token);
   mem.token=null; mem.fileId=null; mem.storageMode='local'; mem.syncState='idle';
-  mem.needsReconnect=false; mem.userInfo=null; mem.remoteModifiedTime=null;
-  setSyncDot('idle'); updateCloudUI(); updateLoginOverlay(); updateStatusPanel(); showToast('Sesión de Google cerrada');
+  mem.needsReconnect=false; mem.userInfo=null; mem.remoteModifiedTime=null; mem.initialDriveCheckDone=true;
+  setSyncDot('idle'); updateCloudUI(); updateLoginOverlay(); updateStatusPanel(); maybePromptPropertySetup(); showToast('Sesión de Google cerrada');
 }
 
 // Iniciar GIS al cargar
