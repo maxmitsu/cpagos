@@ -130,6 +130,19 @@
   .img-viewer-bg.open{display:flex;}
   .img-viewer-bg img{max-width:90vw;max-height:90vh;border-radius:12px;}
   .close-x{position:absolute;top:20px;right:24px;color:#fff;font-size:2rem;cursor:pointer;background:none;border:none;}
+  
+  .login-overlay{position:fixed;inset:0;background:rgba(26,22,18,.78);backdrop-filter:blur(6px);z-index:500;display:none;align-items:center;justify-content:center;padding:20px;}
+  .login-overlay.show{display:flex;}
+  .login-card{background:var(--card);border:1px solid var(--border);border-radius:24px;box-shadow:var(--shadow-lg);max-width:460px;width:100%;padding:28px;text-align:center;}
+  .login-card h2{font-family:'DM Serif Display',serif;font-size:2rem;margin-bottom:8px;}
+  .login-card p{color:var(--ink2);font-size:.96rem;line-height:1.5;margin-bottom:18px;}
+  .login-meta{display:flex;justify-content:center;gap:10px;flex-wrap:wrap;margin-bottom:18px;}
+  .login-pill{background:var(--bg);border:1px solid var(--border);border-radius:999px;padding:7px 12px;font-size:.8rem;color:var(--ink2);font-family:'DM Mono',monospace;}
+  .status-panel{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:22px;}
+  .status-card{background:var(--card);border-radius:14px;padding:14px 16px;border:1px solid var(--border);box-shadow:var(--shadow);}
+  .status-label{font-size:.68rem;text-transform:uppercase;letter-spacing:1px;color:var(--ink3);font-family:'DM Mono',monospace;}
+  .status-value{font-size:.86rem;color:var(--ink);margin-top:6px;font-weight:600;line-height:1.3;}
+
   @media(max-width:600px){
     .summary{grid-template-columns:1fr 1fr;}
     .summary .sum-card:last-child{grid-column:1/-1;}
@@ -137,6 +150,7 @@
     .property-card{flex-direction:column;align-items:flex-start;}
     .share-btns{grid-template-columns:1fr;}
     .btn-header span{display:none;}
+    .status-panel{grid-template-columns:1fr 1fr;}
   }
 </style>
 </head>
@@ -171,6 +185,13 @@
     </div>
   </div>
 
+  <div class="status-panel">
+    <div class="status-card"><div class="status-label">Sesión</div><div class="status-value" id="statusSession">No iniciada</div></div>
+    <div class="status-card"><div class="status-label">Internet</div><div class="status-value" id="statusOnline">Verificando…</div></div>
+    <div class="status-card"><div class="status-label">Último guardado</div><div class="status-value" id="statusSavedAt">—</div></div>
+    <div class="status-card"><div class="status-label">Sincronización</div><div class="status-value" id="statusSync">Pendiente</div></div>
+  </div>
+
   <!-- PROPERTY CARD -->
   <div class="property-card">
     <div>
@@ -191,6 +212,8 @@
   <!-- BACKUP BAR -->
   <div class="backup-bar">
     <button class="btn-backup primary" id="btnLinkBar" onclick="gdriveConnect()">🔐 Iniciar sesión con Google</button>
+    <button class="btn-backup" onclick="manualSync()">🔄 Sincronizar ahora</button>
+    <button class="btn-backup" onclick="reconnectGoogle()">♻️ Reconectar</button>
     <button class="btn-backup" id="btnLocalMode" onclick="toggleLocalMode()">💾 Respaldo local: OFF</button>
     <button class="btn-backup" onclick="downloadSnapshotHTML()">⬇ Descargar app completa (.html)</button>
     <button class="btn-backup" onclick="exportJSON()">⬇ Exportar respaldo .json</button>
@@ -313,6 +336,19 @@
   <img id="imgViewerSrc" src="" alt="Evidencia">
 </div>
 
+
+<div class="login-overlay" id="loginOverlay">
+  <div class="login-card">
+    <h2>🔐 Inicia sesión</h2>
+    <p>Para evitar pérdida de información, el guardado principal funciona con tu cuenta de Google. El respaldo local es opcional.</p>
+    <div class="login-meta">
+      <div class="login-pill" id="overlayOnline">Internet: —</div>
+      <div class="login-pill" id="overlaySync">Estado: esperando sesión</div>
+    </div>
+    <button class="btn-new" style="margin:0 auto;" onclick="gdriveConnect()">Iniciar sesión con Google</button>
+  </div>
+</div>
+
 <script>
 // ── STATE ──
 let property={}, payments=[], editingId=null, filter='all', pendingEvidence=null, pendingEvidenceName=null, receiptId=null,  saveTimer=null;
@@ -332,10 +368,48 @@ const mem={token:null,tokenClient:null,saveTimer:null,pollTimer:null,fileId:null
   renderAll();
   updateCloudUI();
   updateLocalModeUI();
+  updateStatusPanel();
+  updateLoginOverlay();
   if(!property.name) setTimeout(openPropModal,500);
 })();
 
-function renderAll(){ renderProperty(); renderPayments(); updateSummary(); }
+function renderAll(){ renderProperty(); renderPayments(); updateSummary(); updateStatusPanel(); }
+function requireLogin(){
+  if(mem.storageMode!=='drive' || !mem.token){
+    updateLoginOverlay();
+    return false;
+  }
+  return true;
+}
+function updateStatusPanel(){
+  const session=(mem.storageMode==='drive'&&mem.token)?('Activa'+(mem.userInfo?.email?' · '+mem.userInfo.email:'')):'No iniciada';
+  const online=navigator.onLine?'En línea':'Sin internet';
+  const saved=mem.lastSync?mem.lastSync.toLocaleTimeString('es-PR'):'—';
+  const syncMap={idle:'Pendiente',saving:'Guardando…',saved:'Sincronizado',error:'Error'};
+  const sync=syncMap[mem.syncState]||'Pendiente';
+  const a=document.getElementById('statusSession'); if(a) a.textContent=session;
+  const b=document.getElementById('statusOnline'); if(b) b.textContent=online;
+  const c=document.getElementById('statusSavedAt'); if(c) c.textContent=saved;
+  const d=document.getElementById('statusSync'); if(d) d.textContent=sync;
+  const e=document.getElementById('overlayOnline'); if(e) e.textContent='Internet: '+online;
+  const f=document.getElementById('overlaySync'); if(f) f.textContent='Estado: '+sync;
+}
+function updateLoginOverlay(){
+  const ov=document.getElementById('loginOverlay');
+  if(!ov) return;
+  const loggedIn=(mem.storageMode==='drive'&&mem.token);
+  ov.classList.toggle('show', !loggedIn);
+  updateStatusPanel();
+}
+async function manualSync(){
+  if(!requireLogin()) return;
+  await driveSave();
+  updateStatusPanel();
+}
+function reconnectGoogle(){
+  mem.needsReconnect=false;
+  gdriveConnect();
+}
 function toggleLocalMode(){
   mem.localBackup=!mem.localBackup;
   if(mem.localBackup){
@@ -362,7 +436,13 @@ function updateLocalModeUI(){
 function persist(){
   localStorage.setItem('cp_prop',JSON.stringify(property));
   localStorage.setItem('cp_pays',JSON.stringify(payments));
-    if(mem.storageMode==='drive'&&mem.fileId) scheduleDriveSave();
+    if(mem.storageMode==='drive'&&mem.fileId){
+    mem.syncState='saving';
+    updateStatusPanel();
+    scheduleDriveSave();
+  }else{
+    updateStatusPanel();
+  }
 }
 }
 
@@ -424,7 +504,7 @@ async function driveGetMeta(id){
 
 function handleDriveAuthError(){
   mem.token=null; mem.storageMode='local'; mem.syncState='error'; mem.needsReconnect=true;
-  stopDrivePoll(); setSyncDot('idle'); updateCloudUI();
+  stopDrivePoll(); setSyncDot('idle'); updateCloudUI(); updateLoginOverlay(); updateStatusPanel();
   showToast('⚠ Drive desconectado. Vuelve a conectar.');
 }
 
@@ -445,11 +525,11 @@ async function driveLoad(){
       mem.fileId=created.id; mem.remoteModifiedTime=created.modifiedTime||null;
     }
     mem.storageMode='drive'; mem.syncState='saved'; mem.lastSync=new Date();
-    setSyncDot('linked'); updateCloudUI(); startDrivePoll();
+    setSyncDot('linked'); updateCloudUI(); startDrivePoll(); updateLoginOverlay(); updateStatusPanel();
     showToast('✓ Sesión iniciada con Google y sincronización activa');
   }catch(e){
     if(e?.status===401) return handleDriveAuthError();
-    mem.syncState='error'; setSyncDot('idle');
+    mem.syncState='error'; setSyncDot('idle'); updateStatusPanel(); updateStatusPanel(); updateLoginOverlay();
     showToast('Error conectando con Drive: '+e.message);
   }
 }
@@ -461,10 +541,10 @@ async function driveSave(){
     const updated=await driveUpdateFile(mem.fileId,{property,payments,savedAt:new Date().toISOString()});
     mem.remoteModifiedTime=updated.modifiedTime||mem.remoteModifiedTime;
     mem.syncState='saved'; mem.lastSync=new Date();
-    setSyncDot('linked');
+    setSyncDot('linked'); updateStatusPanel();
   }catch(e){
     if(e?.status===401) return handleDriveAuthError();
-    mem.syncState='error'; setSyncDot('idle');
+    mem.syncState='error'; setSyncDot('idle'); updateStatusPanel();
   }
 }
 
@@ -483,15 +563,17 @@ function startDrivePoll(){
         const content=await driveReadFile(mem.fileId);
         property=content.property||{}; payments=content.payments||[];
         mem.remoteModifiedTime=meta.modifiedTime;
-        persist(); renderAll(); showToast('☁️ Datos actualizados desde Drive');
+        persist(); renderAll(); updateStatusPanel(); showToast('☁️ Datos actualizados desde Drive');
       }
     }catch(e){if(e?.status===401) handleDriveAuthError();}
   },45000);
 }
 function stopDrivePoll(){if(mem.pollTimer)clearInterval(mem.pollTimer);mem.pollTimer=null;}
-window.addEventListener('online',()=>{ if(mem.storageMode==='drive'&&mem.fileId) driveSave(); });
+window.addEventListener('online',()=>{ updateStatusPanel(); if(mem.storageMode==='drive'&&mem.fileId) driveSave(); });
+window.addEventListener('offline',()=>{ updateStatusPanel(); });
 document.addEventListener('visibilitychange',()=>{
   if(document.visibilityState==='visible'&&mem.storageMode==='drive'&&mem.fileId) driveSave();
+  updateStatusPanel();
 });
 
 // GIS init — igual que AutoLog
@@ -562,7 +644,7 @@ function gdriveDisconnect(){
   if(mem.token) window.google?.accounts?.oauth2?.revoke(mem.token);
   mem.token=null; mem.fileId=null; mem.storageMode='local'; mem.syncState='idle';
   mem.needsReconnect=false; mem.userInfo=null; mem.remoteModifiedTime=null;
-  setSyncDot('idle'); updateCloudUI(); showToast('Sesión de Google cerrada');
+  setSyncDot('idle'); updateCloudUI(); updateLoginOverlay(); updateStatusPanel(); showToast('Sesión de Google cerrada');
 }
 
 // Iniciar GIS al cargar
@@ -601,6 +683,7 @@ function updateCloudUI(){
     btnBar.textContent='🔐 Iniciar sesión con Google';
     setSyncDot('idle');
   }
+  updateStatusPanel();
 }
 function setSyncDot(s){
   const d=document.getElementById('syncDot');
@@ -673,6 +756,7 @@ function openPropModal(){
   openModal('propModal');
 }
 function saveProperty(){
+  if(!requireLogin()) return;
   property={name:v('propNameInput'),price:pf('propPriceInput'),monthly:pf('propMonthlyInput'),seller:v('propSellerInput'),buyer:v('propBuyerInput'),sellerEmail:v('propSellerEmail'),notes:v('propNotesInput')};
   persist(); renderProperty(); closeModal('propModal'); showToast('✓ Propiedad guardada');
 }
@@ -684,6 +768,7 @@ function renderProperty(){
 
 // ── PAYMENTS ──
 function openNewPayment(){
+  if(!requireLogin()) return;
   editingId=null; pendingEvidence=null; pendingEvidenceName=null;
   document.getElementById('payModalTitle').textContent='Registrar Pago';
   ['payAmount','payNote','payEvidenceLink'].forEach(id=>document.getElementById(id).value='');
@@ -716,6 +801,7 @@ function editPayment(id){
   openModal('payModal');
 }
 function savePayment(){
+  if(!requireLogin()) return;
   const amount=pf('payAmount'); if(!amount||amount<=0){alert('Ingresa un monto válido.');return;}
   const ex=editingId?payments.find(x=>x.id===editingId):null;
   const p={id:editingId||Date.now().toString(),num:ex?ex.num:payments.length+1,created:ex?ex.created:new Date().toISOString(),
