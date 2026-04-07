@@ -456,7 +456,7 @@ function persist(){
 
 // ── GOOGLE LOGIN + DRIVE SYNC ──
 const GDRIVE_CLIENT_ID='304798731170-8cr49nibe88fa6qq67aqp1dqahe45gbq.apps.googleusercontent.com';
-const GDRIVE_SCOPES='https://www.googleapis.com/auth/drive.file';
+const GDRIVE_SCOPES='https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/userinfo.email';
 const GDRIVE_FILE_NAME='casa-pagos-backup.json';
 const GDRIVE_FOLDER='appDataFolder';
 
@@ -473,7 +473,7 @@ async function driveReq(url,opts={}){
   return res;
 }
 async function driveFindFile(){
-  const q=encodeURIComponent(`name='${GDRIVE_FILE_NAME}' and '${GDRIVE_FOLDER}' in parents and trashed=false`);
+  const q=encodeURIComponent(`name='${GDRIVE_FILE_NAME}' and trashed=false`);
   const res=await driveReq(`https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&q=${q}&fields=files(id,name,modifiedTime)`);
   const data=await safeJson(res);
   return data?.files?.[0]||null;
@@ -607,9 +607,15 @@ function initGIS(){
             const userRes=await fetch('https://www.googleapis.com/oauth2/v3/userinfo',{
               headers:{Authorization:`Bearer ${resp.access_token}`}
             });
-            const user=await safeJson(userRes);
-            mem.userInfo=user||null;
-          }catch{}
+            if(userRes.ok){
+              const user=await safeJson(userRes);
+              mem.userInfo=user||null;
+            }else{
+              mem.userInfo=null;
+            }
+          }catch{
+            mem.userInfo=null;
+          }
           await driveLoad();
         }
       });
