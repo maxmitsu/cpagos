@@ -1083,9 +1083,19 @@ document.querySelectorAll('.modal-bg').forEach(bg=>bg.addEventListener('click',e
 // ── SERVICE WORKER (PWA) ──
 if('serviceWorker' in navigator){
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('sw.js')
-      .then(r => console.log('SW registrado:', r.scope))
-      .catch(e => console.log('SW error:', e));
+navigator.serviceWorker.register('sw.js')
+  .then(reg => {
+    console.log('SW registrado:', reg.scope);
+    reg.update();
+
+    let refreshing = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (refreshing) return;
+      refreshing = true;
+      window.location.reload();
+    });
+  })
+  .catch(e => console.log('SW error:', e));
   });
 }
 </script>
