@@ -1,60 +1,57 @@
-const CACHE = 'casapagos-v2';
+const CACHE = 'casapagos-v3';
 
-const ASSETS = [
+const APP_SHELL = [
   '/cpagos/',
-  '/cpagos/index.html',
   '/cpagos/manifest.json',
   '/cpagos/icon-192.png',
-  '/cpagos/icon-512.png',
-  'https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600&display=swap',
-  'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js'
+  '/cpagos/icon-512.png'
 ];
 
-// INSTALL
-self.addEventListener('install', e => {
-  e.waitUntil(
+self.addEventListener('install', event => {
+  event.waitUntil(
     caches.open(CACHE)
-      .then(cache => cache.addAll(ASSETS))
+      .then(cache => cache.addAll(APP_SHELL))
       .then(() => self.skipWaiting())
   );
 });
 
-// ACTIVATE
-self.addEventListener('activate', e => {
-  e.waitUntil(
+self.addEventListener('activate', event => {
+  event.waitUntil(
     caches.keys().then(keys =>
-      Promise.all(
-        keys.filter(k => k !== CACHE).map(k => caches.delete(k))
-      )
+      Promise.all(keys.filter(key => key !== CACHE).map(key => caches.delete(key)))
     ).then(() => self.clients.claim())
   );
 });
 
-// FETCH
-self.addEventListener('fetch', e => {
-  if (e.request.method !== 'GET') return;
+self.addEventListener('fetch', event => {
+  const request = event.request;
 
-  // Evitar cachear Google APIs
-  if (
-    e.request.url.includes('googleapis.com') ||
-    e.request.url.includes('accounts.google.com')
-  ) return;
+  if (request.method !== 'GET') return;
 
-  e.respondWith(
-    caches.match(e.request).then(cached => {
-      if (cached) return cached;
+  const isHTML =
+    request.mode === 'navigate' ||
+    (request.headers.get('accept') || '').includes('text/html');
 
-      return fetch(e.request)
-        .then(response => {
-          if (!response || response.status !== 200 || response.type === 'opaque') {
-            return response;
+  // 🔥 CLAVE: network-first para HTML
+  if (isHTML) {
+    event.respondWith(
+      fetch(request)
+        .then(res => {
+          if (res && res.status === 200) {
+            const clone = res.clone();
+            caches.open(CACHE).then(cache => cache.put('/cpagos/index.html', clone));
           }
-
-          const clone = response.clone();
-          caches.open(CACHE).then(cache => cache.put(e.request, clone));
-          return response;
+          return res;
         })
-        .catch(() => caches.match('/cpagos/index.html'));
+        .catch(() => caches.match('/cpagos/index.html'))
+    );
+    return;
+  }
+
+  // assets normales
+  event.respondWith(
+    caches.match(request).then(cached => {
+      return cached || fetch(request);
     })
   );
 });
