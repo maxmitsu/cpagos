@@ -1,7 +1,8 @@
-const CACHE = 'casapagos-v3';
+const CACHE = 'casapagos-v4';
 
 const APP_SHELL = [
   '/cpagos/',
+  '/cpagos/index.html',
   '/cpagos/manifest.json',
   '/cpagos/icon-192.png',
   '/cpagos/icon-512.png'
@@ -32,10 +33,9 @@ self.addEventListener('fetch', event => {
     request.mode === 'navigate' ||
     (request.headers.get('accept') || '').includes('text/html');
 
-  // 🔥 CLAVE: network-first para HTML
   if (isHTML) {
     event.respondWith(
-      fetch(request)
+      fetch(new Request(request.url, { cache: 'no-store' }))
         .then(res => {
           if (res && res.status === 200) {
             const clone = res.clone();
@@ -48,10 +48,7 @@ self.addEventListener('fetch', event => {
     return;
   }
 
-  // assets normales
   event.respondWith(
-    caches.match(request).then(cached => {
-      return cached || fetch(request);
-    })
+    caches.match(request).then(cached => cached || fetch(request))
   );
 });
