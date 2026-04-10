@@ -262,7 +262,7 @@
       </div>
       <div class="form-group">
         <label>Evidencia (foto)</label>
-        <div class="upload-area"><span class="upload-icon">📎</span>Imagen o PDF<input type="file" id="payEvidence" accept="image/*,application/pdf" onchange="previewFile(this)"></div>
+        <div class="upload-area"><span class="upload-icon">📎</span>Imagen o PDF<input type="file" id="payEvidence" accept="image/*,application/pdf" onclick="this.value=''" onchange="previewFile(this)"></div>
         <img id="evidencePreview" class="preview-img" style="display:none">
         <div id="pdfPreview" style="display:none;margin-top:10px;background:#fff3f0;border:1.5px solid var(--accent);border-radius:10px;padding:10px 14px;display:none;align-items:center;gap:10px;">
           <span style="font-size:1.6rem">📄</span>
@@ -352,7 +352,7 @@
 
 <script>
 // ── STATE ──
-let property={}, payments=[], editingId=null, filter='all', pendingEvidence=null, pendingEvidenceName=null, receiptId=null,  saveTimer=null;
+let property={}, payments=[], editingId=null, filter='all', pendingEvidence=null, pendingEvidenceName=null, receiptId=null, saveTimer=null, evidenceLoading=false;
 const mem={token:null,tokenClient:null,saveTimer:null,pollTimer:null,fileId:null,remoteModifiedTime:null,needsReconnect:false,userInfo:null,storageMode:'local',syncState:'idle',lastSync:null,localBackup:false,initialDriveCheckDone:false};
 
 // ── INIT ──
@@ -800,14 +800,24 @@ function renderProperty(){
 // ── PAYMENTS ──
 function openNewPayment(){
   if(!requireLogin()) return;
-  editingId=null; pendingEvidence=null; pendingEvidenceName=null;
+
+  editingId=null;
+  pendingEvidence=null;
+  pendingEvidenceName=null;
+  evidenceLoading=false;
+
   document.getElementById('payModalTitle').textContent='Registrar Pago';
   ['payAmount','payNote','payEvidenceLink'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('payStatus').value='paid';
   document.getElementById('payMethod').value='Efectivo';
+  document.getElementById('payDate').value=today();
+
+  document.getElementById('payEvidence').value='';
+  document.getElementById('evidencePreview').src='';
   document.getElementById('evidencePreview').style.display='none';
   document.getElementById('pdfPreview').style.display='none';
-  document.getElementById('payDate').value=today();
+  document.getElementById('pdfPreviewName').textContent='';
+
   openModal('payModal');
 }
 function editPayment(id){
@@ -833,15 +843,50 @@ function editPayment(id){
 }
 function savePayment(){
   if(!requireLogin()) return;
-  const amount=pf('payAmount'); if(!amount||amount<=0){alert('Ingresa un monto válido.');return;}
+
+  if(evidenceLoading){
+    alert('Espera a que termine de cargarse el adjunto.');
+    return;
+  }
+
+  const amount=pf('payAmount');
+  if(!amount || amount<=0){
+    alert('Ingresa un monto válido.');
+    return;
+  }
+
   const ex=editingId?payments.find(x=>x.id===editingId):null;
-  const p={id:editingId||Date.now().toString(),num:ex?ex.num:payments.length+1,created:ex?ex.created:new Date().toISOString(),
-    amount,date:document.getElementById('payDate').value,note:v('payNote'),status:document.getElementById('payStatus').value,
-    method:document.getElementById('payMethod').value,evidence:pendingEvidence||null,evidenceName:pendingEvidenceName||null,
-    evidenceLink:v('payEvidenceLink')||null};
-  if(editingId){const i=payments.findIndex(x=>x.id===editingId);payments[i]=p;}else payments.unshift(p);
-  persist(); renderPayments(); updateSummary(); closeModal('payModal');
-  showToast(editingId?'✓ Pago actualizado':'✓ Pago registrado');
+  const p={
+    id:editingId||Date.now().toString(),
+    num:ex?ex.num:payments.length+1,
+    created:ex?ex.created:new Date().toISOString(),
+    amount,
+    date:document.getElementById('payDate').value,
+    note:v('payNote'),
+    status:document.getElementById('payStatus').value,
+    method:document.getElementById('payMethod').value,
+    evidence:pendingEvidence||null,
+    evidenceName:pendingEvidenceName||null,
+    evidenceLink:v('payEvidenceLink')||null
+  };
+
+  if(editingId){
+    const i=payments.findIndex(x=>x.id===editingId);
+    payments[i]=p;
+  }else{
+    payments.unshift(p);
+  }
+
+  persist();
+  renderPayments();
+  updateSummary();
+  closeModal('payModal');
+
+  const updated=!!ex;
+  editingId=null;
+  clearEvidence();
+
+  showToast(updated?'✓ Pago actualizado':'✓ Pago registrado');
 }
 function deletePayment(id){
   if(!confirm('¿Eliminar este pago?')) return;
@@ -880,29 +925,50 @@ function updateSummary(){
 
 // ── EVIDENCE ──
 function previewFile(input){
-  if(!input.files||!input.files[0]) return;
+  if(!input.files || !input.files[0]) return;
+
   const file=input.files[0];
+  evidenceLoading=true;
+
   const r=new FileReader();
   r.onload=e=>{
     pendingEvidence=e.target.result;
     pendingEvidenceName=file.name;
+
     const imgPrev=document.getElementById('evidencePreview');
     const pdfPrev=document.getElementById('pdfPreview');
+
     if(file.type==='application/pdf'){
+      imgPrev.src='';
       imgPrev.style.display='none';
       document.getElementById('pdfPreviewName').textContent=file.name;
       pdfPrev.style.display='flex';
     } else {
-      imgPrev.src=pendingEvidence; imgPrev.style.display='block';
+      imgPrev.src=pendingEvidence;
+      imgPrev.style.display='block';
       pdfPrev.style.display='none';
     }
+
+    evidenceLoading=false;
   };
+
+  r.onerror=()=>{
+    evidenceLoading=false;
+    pendingEvidence=null;
+    pendingEvidenceName=null;
+    alert('No se pudo leer el archivo adjunto.');
+  };
+
   r.readAsDataURL(file);
 }
 function clearEvidence(){
-  pendingEvidence=null; pendingEvidenceName=null;
+  pendingEvidence=null;
+  pendingEvidenceName=null;
+  evidenceLoading=false;
+  document.getElementById('evidencePreview').src='';
   document.getElementById('evidencePreview').style.display='none';
   document.getElementById('pdfPreview').style.display='none';
+  document.getElementById('pdfPreviewName').textContent='';
   document.getElementById('payEvidence').value='';
 }
 function isPDF(ev){ return ev&&ev.startsWith('data:application/pdf'); }
