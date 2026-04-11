@@ -1077,18 +1077,42 @@ async function downloadPDF(){
   doc.setDrawColor(200,192,180); doc.setLineWidth(0.3); doc.line(mg,y,W-mg,y); y+=8;
 
   // Rows
-  const rows=[['Recibo N°','#'+pad(p.num)],['Fecha',fmtDate(p.date)],['Método de pago',p.method],
-    ['Propiedad',property.name||'—'],['Comprador',property.buyer||'—'],['Vendedor',property.seller||'—'],
-    ...(p.note?[['Concepto',p.note]]:[])];
-  doc.setFontSize(9);
-  rows.forEach(([label,val])=>{
-    doc.setFont('helvetica','normal'); doc.setTextColor(90,82,72); doc.text(label,mg,y);
-    doc.setFont('helvetica','bold'); doc.setTextColor(26,22,18);
-    const lines=doc.splitTextToSize(String(val),62);
-    doc.text(lines,W-mg,y,{align:'right'});
-    y+=lh*lines.length;
-    doc.setDrawColor(224,216,204); doc.setLineWidth(0.2); doc.line(mg,y-1,W-mg,y-1);
-  });
+  const rows = [
+  ['Recibo N°', '#'+pad(p.num)],
+  ['Fecha', fmtDate(p.date)],
+  ['Método de pago', p.method],
+  ['Propiedad', property.name || '—'],
+  ['Comprador', property.buyer || '—'],
+  ['Vendedor', property.seller || '—'],
+  ...(p.note ? [['Concepto', p.note]] : [])
+];
+
+const labelX = mg;
+const valueX = 88;      // columna fija para valores
+const valueWidth = W - mg - valueX;
+
+doc.setFontSize(9);
+
+rows.forEach(([label, val]) => {
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(90, 82, 72);
+  doc.text(String(label), labelX, y);
+
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(26, 22, 18);
+
+  const lines = doc.splitTextToSize(String(val), valueWidth);
+  doc.text(lines, valueX, y);
+
+  const rowHeight = Math.max(lh * lines.length, lh);
+  y += rowHeight;
+
+  doc.setDrawColor(224, 216, 204);
+  doc.setLineWidth(0.2);
+  doc.line(mg, y - 1, W - mg, y - 1);
+
+  y += 2;
+});
   y+=5;
 
   // Totals
