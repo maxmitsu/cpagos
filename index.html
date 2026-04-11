@@ -1125,7 +1125,7 @@ async function downloadPDF(){
   if(p.evidenceLink){
     doc.setDrawColor(200,192,180); doc.setLineWidth(0.2); doc.line(mg,y,W-mg,y); y+=5;
     doc.setFontSize(8); doc.setTextColor(26,90,232); doc.setFont('helvetica','bold');
-    doc.text('🔗 EVIDENCIA EN LÍNEA',mg,y); y+=5;
+    doc.text('[LINK] EVIDENCIA EN LÍNEA',mg,y); y+=5;
     doc.setFontSize(7.5); doc.setFont('helvetica','normal');
     const linkLines=doc.splitTextToSize(p.evidenceLink,W-mg*2);
     doc.text(linkLines,mg,y); y+=linkLines.length*5+3;
