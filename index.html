@@ -471,8 +471,9 @@ function persist(){
 
 // ── GOOGLE LOGIN + DRIVE SYNC ──
 const GDRIVE_CLIENT_ID='304798731170-8cr49nibe88fa6qq67aqp1dqahe45gbq.apps.googleusercontent.com';
-const GDRIVE_SCOPES='https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/userinfo.email';
+const GDRIVE_SCOPES='https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.email';
 const GDRIVE_FILE_NAME='casa-pagos-backup.json';
+const GDRIVE_FOLDER_NAME='CasaPagos Adjuntos';
 const GDRIVE_FOLDER='appDataFolder';
 
 // Drive HTTP helpers
@@ -489,7 +490,7 @@ async function driveReq(url,opts={}){
 }
 async function driveFindFile(){
   const q=encodeURIComponent(`name='${GDRIVE_FILE_NAME}' and trashed=false`);
-  const res=await driveReq(`https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&q=${q}&fields=files(id,name,modifiedTime)`);
+  const res=await driveReq(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name,modifiedTime)`);
   const data=await safeJson(res);
   return data?.files?.[0]||null;
 }
@@ -507,7 +508,7 @@ async function driveReadFile(id){
   return await safeJson(res);
 }
 async function driveCreateFile(content){
-  const meta=new Blob([JSON.stringify({name:GDRIVE_FILE_NAME,parents:[GDRIVE_FOLDER]})],{type:'application/json'});
+  const meta=new Blob([JSON.stringify({name:GDRIVE_FILE_NAME})],{type:'application/json'});
   const body=new Blob([JSON.stringify(content)],{type:'application/json'});
   const form=new FormData();form.append('metadata',meta);form.append('file',body);
   const res=await driveReq('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,modifiedTime',{method:'POST',body:form});
@@ -522,6 +523,64 @@ async function driveUpdateFile(id,content){
 async function driveGetMeta(id){
   const res=await driveReq(`https://www.googleapis.com/drive/v3/files/${id}?fields=id,modifiedTime`);
   return await safeJson(res);
+}
+async function ensureDriveFolder(){
+  const q=encodeURIComponent(`name='${GDRIVE_FOLDER_NAME}' and mimeType='application/vnd.google-apps.folder' and trashed=false`);
+  const res=await driveReq(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)`);
+  const data=await safeJson(res);
+  if(data?.files?.length) return data.files[0].id;
+
+  const folderRes=await driveReq('https://www.googleapis.com/drive/v3/files?fields=id,name',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({
+      name:GDRIVE_FOLDER_NAME,
+      mimeType:'application/vnd.google-apps.folder'
+    })
+  });
+  const folder=await safeJson(folderRes);
+  return folder.id;
+}
+
+async function makeFilePublic(fileId){
+  await driveReq(`https://www.googleapis.com/drive/v3/files/${fileId}/permissions`,{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({
+      role:'reader',
+      type:'anyone'
+    })
+  });
+}
+
+async function uploadFileToDrive(file){
+  const folderId=await ensureDriveFolder();
+
+  const metadata={
+    name:file.name,
+    parents:[folderId]
+  };
+
+  const form=new FormData();
+  form.append('metadata', new Blob([JSON.stringify(metadata)], {type:'application/json'}));
+  form.append('file', file);
+
+  const res=await driveReq('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink,webContentLink',{
+    method:'POST',
+    body:form
+  });
+
+  const data=await safeJson(res);
+  await makeFilePublic(data.id);
+
+  const metaRes=await driveReq(`https://www.googleapis.com/drive/v3/files/${data.id}?fields=id,webViewLink,webContentLink`);
+  const meta=await safeJson(metaRes);
+
+  return {
+    id:data.id,
+    viewLink:meta?.webViewLink || data?.webViewLink || '',
+    downloadLink:meta?.webContentLink || data?.webContentLink || ''
+  };
 }
 
 function handleDriveAuthError(){
@@ -800,24 +859,20 @@ function renderProperty(){
 // ── PAYMENTS ──
 function openNewPayment(){
   if(!requireLogin()) return;
-
   editingId=null;
   pendingEvidence=null;
   pendingEvidenceName=null;
   evidenceLoading=false;
-
   document.getElementById('payModalTitle').textContent='Registrar Pago';
   ['payAmount','payNote','payEvidenceLink'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('payStatus').value='paid';
   document.getElementById('payMethod').value='Efectivo';
   document.getElementById('payDate').value=today();
-
   document.getElementById('payEvidence').value='';
   document.getElementById('evidencePreview').src='';
   document.getElementById('evidencePreview').style.display='none';
   document.getElementById('pdfPreview').style.display='none';
   document.getElementById('pdfPreviewName').textContent='';
-
   openModal('payModal');
 }
 function editPayment(id){
@@ -843,32 +898,22 @@ function editPayment(id){
 }
 function savePayment(){
   if(!requireLogin()) return;
-
   if(evidenceLoading){
-    alert('Espera a que termine de cargarse el adjunto.');
+    alert('Espera a que termine de subirse el adjunto.');
     return;
   }
 
-  const amount=pf('payAmount');
-  if(!amount || amount<=0){
+  const amount=pf('payAmount'); 
+  if(!amount||amount<=0){
     alert('Ingresa un monto válido.');
     return;
   }
 
   const ex=editingId?payments.find(x=>x.id===editingId):null;
-  const p={
-    id:editingId||Date.now().toString(),
-    num:ex?ex.num:payments.length+1,
-    created:ex?ex.created:new Date().toISOString(),
-    amount,
-    date:document.getElementById('payDate').value,
-    note:v('payNote'),
-    status:document.getElementById('payStatus').value,
-    method:document.getElementById('payMethod').value,
-    evidence:pendingEvidence||null,
-    evidenceName:pendingEvidenceName||null,
-    evidenceLink:v('payEvidenceLink')||null
-  };
+  const p={id:editingId||Date.now().toString(),num:ex?ex.num:payments.length+1,created:ex?ex.created:new Date().toISOString(),
+    amount,date:document.getElementById('payDate').value,note:v('payNote'),status:document.getElementById('payStatus').value,
+    method:document.getElementById('payMethod').value,evidence:null,evidenceName:pendingEvidenceName||null,
+    evidenceLink:v('payEvidenceLink')||null};
 
   if(editingId){
     const i=payments.findIndex(x=>x.id===editingId);
@@ -877,9 +922,9 @@ function savePayment(){
     payments.unshift(p);
   }
 
-  persist();
-  renderPayments();
-  updateSummary();
+  persist(); 
+  renderPayments(); 
+  updateSummary(); 
   closeModal('payModal');
 
   const updated=!!ex;
@@ -924,16 +969,23 @@ function updateSummary(){
 }
 
 // ── EVIDENCE ──
-function previewFile(input){
+async function previewFile(input){
   if(!input.files || !input.files[0]) return;
+  if(!requireLogin()){
+    input.value='';
+    return;
+  }
 
   const file=input.files[0];
   evidenceLoading=true;
+  showToast('⏳ Subiendo adjunto a Drive...');
 
-  const r=new FileReader();
-  r.onload=e=>{
-    pendingEvidence=e.target.result;
+  try{
+    const uploaded=await uploadFileToDrive(file);
+
+    pendingEvidence=null;
     pendingEvidenceName=file.name;
+    document.getElementById('payEvidenceLink').value=uploaded.viewLink || uploaded.downloadLink || '';
 
     const imgPrev=document.getElementById('evidencePreview');
     const pdfPrev=document.getElementById('pdfPreview');
@@ -944,22 +996,22 @@ function previewFile(input){
       document.getElementById('pdfPreviewName').textContent=file.name;
       pdfPrev.style.display='flex';
     } else {
-      imgPrev.src=pendingEvidence;
+      const localPreview=URL.createObjectURL(file);
+      imgPrev.src=localPreview;
       imgPrev.style.display='block';
       pdfPrev.style.display='none';
     }
 
-    evidenceLoading=false;
-  };
-
-  r.onerror=()=>{
-    evidenceLoading=false;
+    showToast('✓ Archivo subido a Drive');
+  }catch(e){
+    console.error(e);
     pendingEvidence=null;
     pendingEvidenceName=null;
-    alert('No se pudo leer el archivo adjunto.');
-  };
-
-  r.readAsDataURL(file);
+    document.getElementById('payEvidenceLink').value='';
+    alert('No se pudo subir el archivo a Google Drive.');
+  }finally{
+    evidenceLoading=false;
+  }
 }
 function clearEvidence(){
   pendingEvidence=null;
